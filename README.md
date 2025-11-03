@@ -332,7 +332,7 @@ valgrind --tool=helgrind ./wordcount sample*.txt
 
 ### Build
 ```bash
-make          # Build all
+make all         # Build all
 make clean    # Remove artifacts
 ```
 
