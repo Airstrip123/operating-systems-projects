@@ -369,7 +369,7 @@ make helgrind
 ├── distwc.c            # Word count application
 ├── Makefile            # Build system
 ├── README.md           # This file
-├── sample*.txt         # Test input files (20 files)
+├── testcase            # Directory containing Test input files (20 files)
 └── result-*.txt        # Output files (generated)
 ```
 
