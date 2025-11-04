@@ -76,6 +76,18 @@ This project implements a single-system MapReduce framework in C using POSIX thr
    - For Map phase: job_size = file size (bytes)
    - For Reduce phase: job_size = partition size (key-value pairs)
 
+**Shortest Job First (SJF) Algorithm
+   1. Lock queue_mutex
+   2. Create new job node with func, arg, job_size
+   3. IF queue is empty:
+      Set head to new job
+   ELSE:
+      Find insertion point where job_size <= next->job_size
+      Insert job maintaining sorted order
+  4. Increment pending_jobs
+  5. Signal jobs_available to wake one waiting thread
+  6. Unlock queue_mutex
+
 2. **Worker Thread Lifecycle**
    ```
    Thread Start → Wait for Jobs → Get Job → Execute → Update State → Repeat
