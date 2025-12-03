@@ -8,151 +8,51 @@
 # CMPUT 379 - Assignment 3: UNIX File System Simulator
 
 ## Overview
-
-This program simulates a UNIX-like file system with the following features:
-- 128 KB virtual disk (128 blocks × 1 KB each)
-- Contiguous block allocation for files
-- Hierarchical directory structure
-- Consistency checking on mount
-- Defragmentation support
+This program implements a UNIX-like file system simulator that mounts a 128 KB virtual disk. It handles file creation, deletion, reading, writing, and directory management using a contiguous block allocation strategy. It also supports consistency checking upon mounting and disk defragmentation.
 
 ## Design Choices
 
-### 1. Global State Management
-- **Rationale**: File system operations are inherently stateful (mounted disk, current directory, buffer)
-- **Implementation**: Used static global variables for `sb`, `buffer`, `current_dir_inode`, etc.
-- **Benefit**: Simplified function signatures and avoided passing state through all function calls
+### Global Variables
+I decided to use global variables for the `Superblock`, the data `buffer`, and the `current_dir_inode`. Since almost every function in the program needs access to the file system state (to check bitmaps, read inodes, or write data), passing these pointers into every single helper function would have made the function signatures very messy. Using globals made the code cleaner and easier to manage.
 
-### 2. Helper Function Architecture
-- **Bit Manipulation Helpers**: Abstract away bitfield operations for maintainability
-- **I/O Helpers**: Centralize disk read/write operations to ensure consistency
-- **Search Helpers**: DRY principle for common operations like finding inodes
+### Bit Manipulation Helpers
+To handle the packed bit fields (where one byte stores two values, like size and status), I wrote helper functions like `is_inode_used`, `get_file_size`, and `set_parent_index`. This abstracts the bitwise AND/OR operations away from the main logic, reducing the chance of bugs when reading/writing metadata.
 
-### 3. Consistency Check Ordering
-- **Challenge**: Spec requires checking errors in exact order (1-6)
-- **Solution**: Implemented as single function with early returns
-- **Benefit**: Guarantees only the first error is reported
+### Consistency Checking
+The assignment requires checking for 6 specific errors in a strict order. I implemented `check_consistency` as a single function that runs through the checks sequentially (1 to 6). It returns the error code immediately upon finding the first inconsistency. This ensures that I always report the highest-priority error first, as required by the spec.
 
-### 4. Name Handling
-- **Challenge**: 5-character names may not be null-terminated
-- **Solution**: Always copy to 6-byte buffer and force null termination
-- **Functions**: `get_inode_name()`, `set_inode_name()`, `inode_name_equals()`
+### Handling 5-Character Names
+The spec mentions that filenames can be exactly 5 characters long without a null terminator on disk. To handle this safely in C, I created a helper `get_inode_name` that always copies the name into a local 6-byte buffer and manually adds a `\0` at the end. This prevents buffer overflows when using `printf` or `strcmp`.
 
-### 5. Defragmentation Algorithm
-- **Approach**: Sort files by current start_block, then compact left-to-right
-- **Complexity**: O(n log n) for sorting + O(total_blocks) for moving
-- **Memory**: Uses temporary 1KB buffer for block transfers
+### Defragmentation Strategy
+For the `fs_defrag` function, I used a "sort and compact" approach. I first collect all file inodes and sort them based on their *current* start block. I then iterate through this sorted list and move each file to the earliest available free block (starting right after the superblock). After moving all files, I zero out the rest of the disk and rebuild the free-space bitmap from scratch. This prevents data loss during the move.
 
 ## System Calls Used
 
-### File Operations
-- `open()` - Open virtual disk file (fs_mount)
-- `close()` - Close virtual disk file (cleanup)
-- `read()` - Read superblock and data blocks
-- `write()` - Write superblock and data blocks
-- `lseek()` - Position file pointer for block access
-
-### String Operations
-- `strcasecmp()` - Case-insensitive name comparison
-- `memcpy()` - Copy data between buffers
-- `memset()` - Zero out memory regions
-
-### I/O
-- `fopen()`, `fgets()`, `fclose()` - Read command file
-- `fprintf()` - Error messages to stderr
-- `printf()` - Output for fs_ls
+* `open` / `close`: Used to access the virtual disk file.
+* `read` / `write`: Used to load the superblock and transfer data blocks to/from the disk.
+* `lseek`: Used to jump to specific block offsets (block_num * 1024) within the disk file.
+* `sscanf`: Used for parsing command input arguments.
+* `memset` / `memcpy`: Used for buffer management and initializing inodes.
 
 ## Testing Strategy
 
-### Unit Testing Approach
-1. **Bit Manipulation**: Created standalone test for all helper functions
-2. **Consistency Checks**: Manually created 6 corrupt disks (one per error type)
-3. **Edge Cases**: 5-char names, max file size (127 blocks), full superblock
-4. **Command Parsing**: Invalid commands, wrong argument counts, out-of-range values
+I tested the program using the provided `create_fs` utility and a combination of automated and manual tests.
 
-### Integration Testing
-Used provided test suite (`test.py`) with 5 test cases:
-- Test 1: Basic create/delete operations
-- Test 2: Read/write with buffer operations
-- Test 3: Multiple disk mounting
-- Test 4: Directory operations and cd
-- Test 5: Defragmentation with corrupted disks
+1.  **Functional Testing:** I used the provided `test.py` script to verify basic operations. I also created custom input files to test specific edge cases, such as:
+    * Creating files with names exactly 5 characters long.
+    * Attempting to create files larger than the available free space.
+    * Recursively deleting directories containing multiple files.
+    * Navigating directories using `..` from the root (to ensure it stays at root).
 
-### Testing Commands
-```bash
-# Compile
-make clean && make
+2.  **Consistency Checks:** Since the provided `create_fs` tool only creates valid disks, I wrote a Python script to deliberately corrupt specific bytes in the disk file. I generated 6 different corrupted disks (one for each error code) and verified that `fs_mount` correctly identified the error codes in the specified order.
 
-# Run single test
-./fs tests/test1/input > stdout.txt 2> stderr.txt
-diff stdout.txt tests/test1/stdout_expected
-diff stderr.txt tests/test1/stderr_expected
+3.  **Memory Testing:** I ran the program using Valgrind to ensure there were no memory leaks or invalid accesses:
+    ```bash
+    valgrind --leak-check=yes ./fs input_file
+    ```
 
-# Run all tests
-python3 test.py
+## Sources
 
-# Memory leak check
-valgrind --leak-check=full --show-leak-kinds=all ./fs tests/test1/input
-```
-
-### Validation Checklist
--  Compiles with -Wall -Werror (no warnings)
-- All 5 provided tests pass
--  No memory leaks (Valgrind clean)
-- Handles 5-character names correctly
-- Case-insensitive name comparison
-- Superblock written after every mutation
-- Error messages in specified order
-- Blocks zeroed on delete/create
-
-## Known Limitations / Assumptions
-
-1. **Maximum Line Length**: Command parser uses 2048-byte buffer (sufficient for B command with 1024 chars)
-2. **Disk Name Length**: Limited to 255 characters
-3. **No Fragmentation Prevention**: Files must fit in contiguous space or fail
-4. **No File Locking**: Single-threaded; no concurrent access protection
-5. **Buffer Not Cleared on Mount**: Per spec, buffer persists across mounts
-
-## Performance Considerations
-
-### Time Complexity
-- `fs_create`: O(n) for inode search + O(m) for block scan, where n=126, m=127
-- `fs_delete`: O(n × d) for recursive delete, d = max directory depth
-- `fs_defrag`: O(n log n + b) where b = total allocated blocks
-- `fs_ls`: O(n) to scan all inodes
-- Consistency checks: O(n²) for name uniqueness check
-
-### Space Complexity
-- Memory footprint: ~1KB (superblock) + 1KB (buffer) + ~100 bytes (state) ≈ 2.1 KB
-- No dynamic allocation (everything on stack or static)
-
-## Sources and References
-
-1. **Course Materials**:
-   - Assignment 3 specification 
-   - Lecture slides on file systems 
-   
-2. **System Call Documentation**:
-   - `man 2 open`, `man 2 read`, `man 2 write`, `man 2 lseek`
-   
-3. **C Standard Library**:
-   - `man 3 strcasecmp`, `man 3 memcpy`
-
-4. **Debugging Tools**:
-   - Valgrind documentation (valgrind.org)
-   - GDB reference card
-
-## Compilation and Execution
-```bash
-# Build
-make
-
-# Run with input file
-./fs 
-
-# Example
-./fs tests/test1/input
-
-# Redirect output
-./fs tests/test1/input > stdout.txt 2> stderr.txt
-```
+* Assignment 3 Specification (a3_cmput379.pdf)
+* Linux Man Pages (man 2 open, man 2 lseek, man 3 strcasecmp)
