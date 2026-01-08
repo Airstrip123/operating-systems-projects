@@ -1,0 +1,19 @@
+# macOS junk
+.DS_Store
+
+# editors
+.vscode/
+
+# build artifacts
+dragonshell
+dragonshell.o
+dragonshell.dSYM/
+*.out
+*.log
+
+# test scratch
+in.txt
+out.txt
+rand
+rand.c
+bye.txt
